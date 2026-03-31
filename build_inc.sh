@@ -59,8 +59,9 @@ if [[ "$1" == "--clean" ]]; then
     git -C "${_warpctc}" reset --hard &>/dev/null && echo "Restored Paddle/third_party/warpctc" || true
   fi
   _eigen="${PADDLE_SOURCE_DIR}/third_party/eigen3"
-  if [[ -d "${_eigen}/.git" ]]; then
-    git -C "${_eigen}" reset --hard &>/dev/null && echo "eigen reset" || true
+  if [[ -d "${_eigen}/.git" ]] || [[ -f "${_eigen}/.git" ]] ||
+    git -C "${_eigen}" rev-parse --is-inside-work-tree &>/dev/null; then
+    git -C "${_eigen}" reset --hard &>/dev/null && echo "Restored Paddle/third_party/eigen3" || true
   fi
   [[ -f "$STATE_FILE" ]] && rm -f "$STATE_FILE" && echo "Removed state file"
   echo "Clean completed!"
@@ -79,6 +80,7 @@ if [[ ! -f "$STATE_FILE" ]]; then
   cp -r "${SCRIPT_DIR}/patches/eigen/Core" "${PADDLE_SOURCE_DIR}/third_party/eigen3/Eigen/Core"
   cp -r "${SCRIPT_DIR}/patches/eigen/Tensor" "${PADDLE_SOURCE_DIR}/third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
   cp -r "${SCRIPT_DIR}/patches/eigen/TensorAssign.h" "${PADDLE_SOURCE_DIR}/third_party/eigen3/unsupported/Eigen/CXX11/src/Tensor/TensorAssign.h"
+  cp -r "${SCRIPT_DIR}/patches/eigen/TensorExecutor.h" "${PADDLE_SOURCE_DIR}/third_party/eigen3/unsupported/Eigen/CXX11/src/Tensor/TensorExecutor.h"
   echo "BUILD_ENV_SET=1" > "$STATE_FILE"
   echo "Environment setup completed"
 else

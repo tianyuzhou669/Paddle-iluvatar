@@ -1,72 +1,3 @@
-From 2f4fd341911214218cf7d4e885f9edc9b4c46963 Mon Sep 17 00:00:00 2001
-From: tianyuzhou668 <tianyu.zhou@iluvatar.com>
-Date: Fri, 3 Apr 2026 17:01:34 +0800
-Subject: [PATCH] Update patch
-
----
- cmake/external/warpctc.cmake                  | 12 ++-
- .../tactic/tile_transpose_tactic.cc           | 28 ------
- .../operators/collective/recv_v2_op.cu.cc     |  2 +-
- .../operators/collective/send_v2_op.cu.cc     |  2 +-
- .../fluid/platform/device/gpu/nccl_helper.h   |  2 +-
- paddle/fluid/pybind/pybind.cc                 |  6 ++
- paddle/phi/backends/c_nvtx_lib.h              | 17 ++++
- paddle/phi/backends/custom/custom_device.cc   | 14 +++
- paddle/phi/backends/device_base.cc            |  8 ++
- paddle/phi/backends/device_base.h             |  8 ++
- paddle/phi/backends/device_ext.h              | 21 ++++-
- paddle/phi/backends/device_manager.cc         | 26 ++++++
- paddle/phi/backends/device_manager.h          |  8 ++
- paddle/phi/backends/dynload/cudnn.cc          |  8 ++
- paddle/phi/backends/dynload/dynamic_loader.cc |  6 ++
- .../backends/gpu/cuda/cuda_device_function.h  |  4 +-
- paddle/phi/backends/gpu/cuda/cuda_graph.cc    |  2 +-
- paddle/phi/backends/gpu/cuda/cuda_helper.h    |  2 +-
- paddle/phi/backends/gpu/cuda/cudnn_desc.h     | 16 +++-
- paddle/phi/backends/gpu/cuda/cudnn_helper.h   |  2 +-
- paddle/phi/backends/gpu/gpu_launch_config.h   | 16 +++-
- paddle/phi/backends/gpu/gpu_primitives.h      | 25 +++++
- paddle/phi/backends/gpu/gpu_types.h           |  5 +
- paddle/phi/core/distributed/nccl_tools.cc     |  2 +-
- paddle/phi/core/enforce.h                     |  6 +-
- .../phi/core/memory/allocation/CMakeLists.txt |  2 +-
- paddle/phi/core/utils/data_type.h             |  2 +-
- paddle/phi/kernels/funcs/activation_functor.h | 20 ++++
- paddle/phi/kernels/funcs/affine_grid_utils.h  |  2 +
- paddle/phi/kernels/funcs/blas/blas_impl.cu.h  | 18 +++-
- paddle/phi/kernels/funcs/cufft_util.h         | 80 ++++++++++++++++
- paddle/phi/kernels/funcs/layer_norm_impl.cu.h |  4 -
- paddle/phi/kernels/funcs/math_cuda_utils.h    |  8 +-
- paddle/phi/kernels/funcs/mode.h               |  3 -
- paddle/phi/kernels/funcs/reduce_function.h    |  2 +-
- paddle/phi/kernels/funcs/reduce_gpu_kernel.h  | 16 ++--
- paddle/phi/kernels/funcs/segmented_array.h    |  8 ++
- paddle/phi/kernels/funcs/softmax_impl.h       |  1 +
- .../phi/kernels/funcs/top_k_function_cuda.h   | 91 +++++++++++--------
- .../fusion/gpu/fused_layernorm_kernel.cu      |  4 -
- .../fused_layernorm_residual_dropout_bias.h   | 17 ----
- .../phi/kernels/gpu/batch_norm_grad_kernel.cu |  2 +-
- paddle/phi/kernels/gpu/batch_norm_kernel.cu   | 11 ++-
- .../kernels/gpu/cross_entropy_grad_kernel.cu  |  2 +-
- paddle/phi/kernels/gpu/elementwise_grad.h     |  4 +
- .../gpu/fused_rms_norm_quant_grad_kernel.cu   |  2 +-
- .../kernels/gpu/instance_norm_grad_kernel.cu  |  2 +-
- .../phi/kernels/gpu/instance_norm_kernel.cu   |  2 +-
- .../kernels/gpu/interpolate_grad_kernel.cu    | 12 +--
- .../phi/kernels/gpu/layer_norm_grad_kernel.cu |  2 +-
- paddle/phi/kernels/gpu/layer_norm_kernel.cu   |  2 +-
- paddle/phi/kernels/gpudnn/conv_cudnn_v7.h     | 78 ++++++++++++----
- paddle/phi/kernels/gpudnn/softmax_gpudnn.h    |  9 +-
- paddle/phi/kernels/gpudnn/softmax_kernel.cu   |  2 +-
- .../kernels/primitive/compute_primitives.h    | 24 ++---
- paddle/phi/kernels/reduce_sum_kernel.cc       |  2 +
- paddle/phi/kernels/shape_kernel.cc            |  2 +
- paddle/phi/kernels/squeeze_kernel.cc          |  2 +
- paddle/phi/kernels/strided_slice_kernel.cc    |  2 +
- paddle/phi/kernels/unsqueeze_kernel.cc        |  2 +
- 60 files changed, 516 insertions(+), 174 deletions(-)
- create mode 100644 paddle/phi/backends/c_nvtx_lib.h
-
 diff --git a/cmake/external/warpctc.cmake b/cmake/external/warpctc.cmake
 index 17ef70b4a0..e70bd507b3 100644
 --- a/cmake/external/warpctc.cmake
@@ -1397,6 +1328,23 @@ index d9209f8c67..4c3f25fc69 100644
      }
    }
    __syncthreads();
+diff --git a/paddle/phi/kernels/fusion/gpu/fused_conv2d_add_act_kernel.cu b/paddle/phi/kernels/fusion/gpu/fused_conv2d_add_act_kernel.cu
+index efa8d043d2..0a7ed6ff05 100644
+--- a/paddle/phi/kernels/fusion/gpu/fused_conv2d_add_act_kernel.cu
++++ b/paddle/phi/kernels/fusion/gpu/fused_conv2d_add_act_kernel.cu
+@@ -518,7 +518,12 @@ void FusedConv2dAddActKernel(const Context& dev_ctx,
+                 &returned_algo_count,
+                 fwd_perf_stat.data(),
+                 cudnn_workspace,
++#ifdef PADDLE_WITH_COREX
++                workspace_size_limit,
++                /*fuse=*/false));
++#else
+                 workspace_size_limit));
++#endif
+       };
+       workspace_handle.RunFuncSync(cudnn_find_func, workspace_size_limit);
+       *cudnn_algo = fwd_perf_stat[0].algo;
 diff --git a/paddle/phi/kernels/fusion/gpu/fused_layernorm_kernel.cu b/paddle/phi/kernels/fusion/gpu/fused_layernorm_kernel.cu
 index 4608f871f2..1d54e0d291 100644
 --- a/paddle/phi/kernels/fusion/gpu/fused_layernorm_kernel.cu
@@ -1645,7 +1593,7 @@ index de26ff4ffa..e82598788a 100644
                     GPU,
                     ALL_LAYOUT,
 diff --git a/paddle/phi/kernels/gpudnn/conv_cudnn_v7.h b/paddle/phi/kernels/gpudnn/conv_cudnn_v7.h
-index cc5700e259..8c6375a08b 100644
+index cc5700e259..4c67f889cd 100644
 --- a/paddle/phi/kernels/gpudnn/conv_cudnn_v7.h
 +++ b/paddle/phi/kernels/gpudnn/conv_cudnn_v7.h
 @@ -152,15 +152,29 @@ struct SearchAlgorithmBase<ConvKind::kForward> {
@@ -1687,7 +1635,20 @@ index cc5700e259..8c6375a08b 100644
      result.workspace_size = GetWorkspaceSize(args, result.algo);
      return result;
    }
-@@ -299,10 +313,25 @@ struct SearchAlgorithmBase<ConvKind::kBackwardData> {
+@@ -192,7 +206,12 @@ struct SearchAlgorithmBase<ConvKind::kForward> {
+               &returned_algo_count,
+               perf_results.data(),
+               workspace_ptr,
++#ifdef PADDLE_WITH_COREX
++              max_workspace_size,
++              /*fuse=*/false));
++#else
+               max_workspace_size));
++#endif
+     };
+ 
+     auto workspace_handle = dev_ctx.cudnn_workspace_handle();
+@@ -299,10 +318,25 @@ struct SearchAlgorithmBase<ConvKind::kBackwardData> {
  
      result.workspace_size = GetWorkspaceSize(args, result.algo);
      if (result.workspace_size > workspace_size_limit) {
@@ -1717,7 +1678,7 @@ index cc5700e259..8c6375a08b 100644
      result.workspace_size = GetWorkspaceSize(args, result.algo);
      return result;
    }
-@@ -442,9 +471,24 @@ struct SearchAlgorithmBase<ConvKind::kBackwardFilter> {
+@@ -442,9 +476,24 @@ struct SearchAlgorithmBase<ConvKind::kBackwardFilter> {
  
      if (result.workspace_size > workspace_size_limit) {
        // cudnnGetConvolutionBackwardFilterAlgorithm is removed in CUDNN-8
@@ -1745,7 +1706,7 @@ index cc5700e259..8c6375a08b 100644
  
      result.workspace_size = GetWorkspaceSize(args, result.algo);
      return result;
-@@ -647,7 +691,7 @@ struct SearchAlgorithm : public SearchAlgorithmBase<CK> {
+@@ -647,7 +696,7 @@ struct SearchAlgorithm : public SearchAlgorithmBase<CK> {
      } else if (dtype == CUDNN_DATA_FLOAT && !cdesc.allow_tf32_) {
        VLOG(5) << "Disable TensorFloat (Tensor Core) for FLOAT";
        PADDLE_ENFORCE_GPU_SUCCESS(phi::dynload::cudnnSetConvolutionMathType(

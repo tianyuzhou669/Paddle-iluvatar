@@ -55,6 +55,7 @@ fi
 cp -r ${CURRENT_DIR}/patches/eigen/Core ${PADDLE_SOURCE_DIR}/third_party/eigen3/Eigen/Core || { echo "Error: Failed to copy eigen Core!"; exit 1; }
 cp -r ${CURRENT_DIR}/patches/eigen/Tensor ${PADDLE_SOURCE_DIR}/third_party/eigen3/unsupported/Eigen/CXX11/Tensor || { echo "Error: Failed to copy eigen Tensor!"; exit 1; }
 cp -r ${CURRENT_DIR}/patches/eigen/TensorAssign.h ${PADDLE_SOURCE_DIR}/third_party/eigen3/unsupported/Eigen/CXX11/src/Tensor/TensorAssign.h || { echo "Error: Failed to copy eigen TensorAssign.h!"; exit 1; }
+cp -r ${CURRENT_DIR}/patches/eigen/TensorExecutor.h ${PADDLE_SOURCE_DIR}/third_party/eigen3/unsupported/Eigen/CXX11/src/Tensor/TensorExecutor.h || { echo "Error: Failed to copy eigen TensorExecutor.h!"; exit 1; }
 
 if [[ ! -d "${PADDLE_BUILD_DIR}" ]]; then
   mkdir -p "${PADDLE_BUILD_DIR}"
@@ -123,6 +124,7 @@ if [[ -d "${_warpctc}/.git" ]] || git -C "${_warpctc}" rev-parse --is-inside-wor
   git -C "${_warpctc}" reset --hard &>/dev/null && echo "Restored Paddle/third_party/warpctc" || true
 fi
 
-pushd ${PADDLE_SOURCE_DIR}/third_party/eigen3
-git reset --hard || { echo "Error: Failed to reset eigen repository!"; exit 1; }
-popd
+if [[ -d "${_eigen}/.git" ]] || [[ -f "${_eigen}/.git" ]] ||
+  git -C "${_eigen}" rev-parse --is-inside-work-tree &>/dev/null; then
+  git -C "${_eigen}" reset --hard &>/dev/null && echo "Restored Paddle/third_party/eigen3" || true
+fi
