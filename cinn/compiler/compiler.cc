@@ -1211,7 +1211,7 @@ C_Status IluvatarCompile(void* dev_ptr,
   if (out_path && len > 0) {
     std::strncpy(out_path, cubin_path.c_str(), len - 1);
     out_path[len - 1] = '\0';
-    std::cout << "[Iluvatar Success] Compiled: " << out_path << std::endl;
+    // std::cout << "[Iluvatar Success] Compiled: " << out_path << std::endl;
   } else {
     std::cerr << "[Iluvatar Error] Invalid out_path buffer!" << std::endl;
     cleanup(false);

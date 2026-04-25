@@ -22,7 +22,7 @@ if [[ "${COREX_VERSION}" == "latest" ]]; then
   COREX_VERSION=`date --utc +%Y%m%d%H%M%S`
 fi
 COREX_ARCH=${COREX_ARCH:-ivcore11}
-WITH_CINN=${WITH_CINN:-OFF}
+WITH_CINN=${WITH_CINN:-ON}
 export CMAKE_CUDA_ARCHITECTURES=${COREX_ARCH}
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
