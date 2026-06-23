@@ -33,8 +33,6 @@ ILUVATAR_BUILD_DIR="${PADDLE_BUILD_DIR}/custom_device_build"
 PATCH_FILE="${SCRIPT_DIR}/patches/paddle-corex.patch"
 STATE_FILE="${SCRIPT_DIR}/.build_state"
 
-REVERT_COMMIT="f4014bfa7b9acddfcfcaffb57b57b2a5c8fe9e7a"
-
 BUILD_WITH_FLAGCX=0
 FLAGCX_ROOT="/workspace/FlagCX"
 PLATFORM_ID=$(uname -i)
@@ -66,12 +64,11 @@ if [[ "$1" == "--clean" ]]; then
       ORIGINAL_HEAD=$(grep "^ORIGINAL_HEAD=" "$STATE_FILE" | cut -d= -f2)
       if [[ -n "$ORIGINAL_HEAD" ]]; then
         echo "Resetting Paddle to original HEAD: $ORIGINAL_HEAD"
-        git -C "${PADDLE_SOURCE_DIR}" reset --hard "$ORIGINAL_HEAD" && echo "Reverted commit removed from history" || true
+        git -C "${PADDLE_SOURCE_DIR}" reset --hard "$ORIGINAL_HEAD" && echo "Reset to original HEAD" || true
       else
         git -C "${PADDLE_SOURCE_DIR}" reset --hard HEAD && echo "Reset to HEAD" || true
       fi
     else
-      git -C "${PADDLE_SOURCE_DIR}" revert --abort &>/dev/null || true
       git -C "${PADDLE_SOURCE_DIR}" reset --hard HEAD && echo "Reset to HEAD" || true
     fi
     
@@ -93,13 +90,6 @@ if [[ ! -f "$STATE_FILE" ]]; then
   echo "First time build detected. Setting up environment..."
   
   ORIGINAL_HEAD=$(git -C "$PADDLE_SOURCE_DIR" rev-parse HEAD)
-  
-  echo "Reverting commit ${REVERT_COMMIT}..."
-  if ! git -C "$PADDLE_SOURCE_DIR" revert --no-edit "$REVERT_COMMIT"; then
-    echo "Error: Failed to revert commit ${REVERT_COMMIT}!"
-    exit 1
-  fi
-  echo "Commit reverted successfully!"
 
   if ! git -C "$PADDLE_SOURCE_DIR" apply --reverse --check "$PATCH_FILE" > /dev/null 2>&1; then
     if ! git -C "$PADDLE_SOURCE_DIR" apply "$PATCH_FILE"; then

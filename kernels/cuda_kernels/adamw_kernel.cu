@@ -21,12 +21,15 @@
 
 #include "glog/logging.h"
 #include "paddle/common/flags.h"
+#include "paddle/phi/backends/context_pool.h"
+#include "paddle/phi/backends/cpu/cpu_context.h"
 #include "paddle/phi/backends/gpu/gpu_context.h"
 #include "paddle/phi/common/amp_type_traits.h"
 #include "paddle/phi/common/memory_utils.h"
 #include "paddle/phi/core/kernel_registry.h"
 #include "paddle/phi/core/tensor_utils.h"
 #include "paddle/phi/kernels/adamw_kernel.h"
+#include "paddle/phi/kernels/cast_kernel.h"
 #include "paddle/phi/kernels/funcs/adam_functors.h"
 #include "paddle/phi/kernels/funcs/for_range.h"
 #include "paddle/phi/kernels/funcs/selected_rows_functor.h"
@@ -73,7 +76,8 @@ __global__ void AdamWKernel(MT beta1,
                             MT beta2,
                             MT epsilon,
                             MT coeff,
-                            MT lr,
+                            MT lr_ratio,
+                            const float* lr_,
                             const TG* grad,
                             const T* param,
                             T* param_out,
@@ -91,6 +95,7 @@ __global__ void AdamWKernel(MT beta1,
   int64_t id =
       static_cast<int64_t>(blockIdx.x) * static_cast<int64_t>(blockDim.x) +
       static_cast<int64_t>(threadIdx.x);
+  MT lr = *lr_ * lr_ratio;
   // Get beta powers
   MT beta1_pow = beta_accessor.GetBeta1();
   MT beta2_pow = beta_accessor.GetBeta2();
@@ -205,6 +210,9 @@ PADDLE_API void AdamwDenseKernel(const Context& dev_ctx,
                                  DenseTensor* beta2_pow_out,
                                  DenseTensor* master_param_outs) {
   if (FLAGS_use_accuracy_compatible_kernel) {
+    PADDLE_THROW(errors::Unimplemented(
+        "AdamW accuracy compatible kernel is not supported on iluvatar gpu. "
+        "Please set FLAGS_use_accuracy_compatible_kernel=false."));
     AdamwDenseKernel_compatible<T, Context>(dev_ctx,
                                             param,
                                             grad,
@@ -273,22 +281,6 @@ PADDLE_API void AdamwDenseKernel(const Context& dev_ctx,
     return;
   }
 
-  float lr_host = 0.0f;
-  if (learning_rate.dtype() == DataType::FLOAT64) {
-    std::vector<double> lr_vec;
-    TensorToVector(learning_rate, dev_ctx, &lr_vec);
-    lr_host = static_cast<float>(lr_vec[0]);
-  } else {
-    PADDLE_ENFORCE_EQ(learning_rate.dtype(),
-                      DataType::FLOAT32,
-                      errors::InvalidArgument(
-                          "AdamW learning_rate should be float32 or float64."));
-    std::vector<float> lr_vec;
-    TensorToVector(learning_rate, dev_ctx, &lr_vec);
-    lr_host = lr_vec[0];
-  }
-  MT lr_ = static_cast<MT>(lr_host) * lr_ratio_;
-
   // if with_decay = false, coeff = 0
   if (!with_decay) {
     coeff_ = static_cast<MT>(0.0);
@@ -339,6 +331,22 @@ PADDLE_API void AdamwDenseKernel(const Context& dev_ctx,
   const bool use_bfloat16_moments = moment1.dtype() == DataType::BFLOAT16 &&
                                     moment2.dtype() == DataType::BFLOAT16;
 
+  // learning_rate is float64 on device in normal iluvatar usage (see adamw.py).
+  // AdamWKernel only reads lr[0], so a scalar buffer is sufficient.
+  DenseTensor lr_fp32_device;
+  lr_fp32_device.Resize({1});
+  double lr_double_host = 0.0;
+  memory_utils::Copy(CPUPlace(),
+                     &lr_double_host,
+                     learning_rate.place(),
+                     learning_rate.data<double>(),
+                     sizeof(double));
+  const float lr_float_host = static_cast<float>(lr_double_host);
+  float* lr_device = dev_ctx.template Alloc<float>(&lr_fp32_device);
+  memory_utils::Copy(
+      dev_ctx.GetPlace(), lr_device, CPUPlace(), &lr_float_host, sizeof(float));
+  const float* lr_float = lr_device;
+
 #define LAUNCH_ADAMW_KERNEL(MOMENT_T)                                     \
   if (beta_pow_on_cpu) {                                                  \
     BetaPowAccessor<MT, true> accessor(beta1_pow.data<MT>(),              \
@@ -350,7 +358,8 @@ PADDLE_API void AdamwDenseKernel(const Context& dev_ctx,
               beta2_,                                                     \
               epsilon_,                                                   \
               coeff_,                                                     \
-              lr_,                                                        \
+              lr_ratio_,                                                  \
+              lr_float,                                                   \
               grad.data<float>(),                                         \
               param.data<T>(),                                            \
               dev_ctx.template Alloc<T>(param_out),                       \
@@ -373,7 +382,8 @@ PADDLE_API void AdamwDenseKernel(const Context& dev_ctx,
               beta2_,                                                     \
               epsilon_,                                                   \
               coeff_,                                                     \
-              lr_,                                                        \
+              lr_ratio_,                                                  \
+              lr_float,                                                   \
               grad.data<T>(),                                             \
               param.data<T>(),                                            \
               dev_ctx.template Alloc<T>(param_out),                       \
@@ -400,7 +410,8 @@ PADDLE_API void AdamwDenseKernel(const Context& dev_ctx,
               beta2_,                                                     \
               epsilon_,                                                   \
               coeff_,                                                     \
-              lr_,                                                        \
+              lr_ratio_,                                                  \
+              lr_float,                                                   \
               grad.data<float>(),                                         \
               param.data<T>(),                                            \
               dev_ctx.template Alloc<T>(param_out),                       \
@@ -423,7 +434,8 @@ PADDLE_API void AdamwDenseKernel(const Context& dev_ctx,
               beta2_,                                                     \
               epsilon_,                                                   \
               coeff_,                                                     \
-              lr_,                                                        \
+              lr_ratio_,                                                  \
+              lr_float,                                                   \
               grad.data<T>(),                                             \
               param.data<T>(),                                            \
               dev_ctx.template Alloc<T>(param_out),                       \
@@ -585,10 +597,10 @@ template <typename T,   // Parameter type (may be fp16/bf16)
           typename TM,  // Moment estimation type (can be bfloat16)
           typename LrAccessor,
           typename BiasCorrAccessor>
-__global__ void AdamWStyleKernel(const float beta1,
-                                 const float beta2,
-                                 const float epsilon,
-                                 const float weight_decay,
+__global__ void AdamWStyleKernel(const double beta1,
+                                 const double beta2,
+                                 const double epsilon,
+                                 const double weight_decay,
                                  LrAccessor lr_accessor,
                                  BiasCorrAccessor bias_corr_accessor,
                                  const TG* __restrict__ grad,
@@ -604,17 +616,17 @@ __global__ void AdamWStyleKernel(const float beta1,
                                  TM* __restrict__ moment2_max_out,
                                  int64_t ndim,
                                  bool amsgrad) {
-  __shared__ float one_minus_beta1_shared;
-  __shared__ float one_minus_beta2_shared;
-  __shared__ float lr_weight_decay_shared;
+  __shared__ double one_minus_beta1_shared;
+  __shared__ double one_minus_beta2_shared;
+  __shared__ double lr_weight_decay_shared;
   __shared__ MT bias_correction2_sqrt_shared;
   __shared__ MT step_size_shared;
 
   if (threadIdx.x == 0) {
-    const float lr_double = lr_accessor.GetLrDouble();
-    const float bc1_dbl = bias_corr_accessor.GetBc1();
-    const float bc2_dbl = bias_corr_accessor.GetBc2();
-    const float bc2_sqrt_dbl = ::sqrt(bc2_dbl);
+    const double lr_double = lr_accessor.GetLrDouble();
+    const double bc1_dbl = bias_corr_accessor.GetBc1();
+    const double bc2_dbl = bias_corr_accessor.GetBc2();
+    const double bc2_sqrt_dbl = ::sqrt(bc2_dbl);
 
     one_minus_beta1_shared = 1.0 - beta1;
     one_minus_beta2_shared = 1.0 - beta2;
@@ -629,9 +641,9 @@ __global__ void AdamWStyleKernel(const float beta1,
   }
   __syncthreads();
 
-  const float one_minus_beta1 = one_minus_beta1_shared;
-  const float one_minus_beta2 = one_minus_beta2_shared;
-  const float lr_weight_decay = lr_weight_decay_shared;
+  const double one_minus_beta1 = one_minus_beta1_shared;
+  const double one_minus_beta2 = one_minus_beta2_shared;
+  const double lr_weight_decay = lr_weight_decay_shared;
   const MT bias_correction2_sqrt = bias_correction2_sqrt_shared;
   const MT step_size = step_size_shared;
 
@@ -645,7 +657,7 @@ __global__ void AdamWStyleKernel(const float beta1,
     MT g = static_cast<MT>(grad[id]);
     MT exp_avg = static_cast<MT>(moment1[id]);
     MT exp_avg_sq = static_cast<MT>(moment2[id]);
-    const float g_d = static_cast<float>(g);
+    const double g_d = static_cast<double>(g);
 
     // Weight decay: param -= lr * weight_decay * param
     if (weight_decay != 0) {
@@ -657,8 +669,8 @@ __global__ void AdamWStyleKernel(const float beta1,
     // We explicitly use __fma_rn to match: first compute (1-beta1)*g (rounded),
     // then fma(beta1, exp_avg_double, rounded_result).
     {
-      const float exp_avg_d = static_cast<float>(exp_avg);
-      const float one_minus_beta1_times_g = __dmul_rn(one_minus_beta1, g_d);
+      const double exp_avg_d = static_cast<double>(exp_avg);
+      const double one_minus_beta1_times_g = __dmul_rn(one_minus_beta1, g_d);
       exp_avg =
           static_cast<MT>(__fma_rn(beta1, exp_avg_d, one_minus_beta1_times_g));
     }
@@ -666,9 +678,9 @@ __global__ void AdamWStyleKernel(const float beta1,
     // exp_avg_sq = beta2 * exp_avg_sq + (1 - beta2) * grad * grad
     // Match torch: ((1-beta2)*g)*g is computed left-to-right, then fma'd.
     {
-      const float exp_avg_sq_d = static_cast<float>(exp_avg_sq);
-      const float one_minus_beta2_times_g = __dmul_rn(one_minus_beta2, g_d);
-      const float grad_sq_term = __dmul_rn(one_minus_beta2_times_g, g_d);
+      const double exp_avg_sq_d = static_cast<double>(exp_avg_sq);
+      const double one_minus_beta2_times_g = __dmul_rn(one_minus_beta2, g_d);
+      const double grad_sq_term = __dmul_rn(one_minus_beta2_times_g, g_d);
       exp_avg_sq = static_cast<MT>(__fma_rn(beta2, exp_avg_sq_d, grad_sq_term));
     }
 
@@ -971,7 +983,6 @@ PD_REGISTER_PLUGIN_KERNEL(adamw,
                           ALL_LAYOUT,
                           phi::AdamwDenseKernel,
                           float,
-                          double,
                           phi::float16,
                           phi::bfloat16) {
   kernel->InputAt(2).SetDataType(phi::DataType::FLOAT64);

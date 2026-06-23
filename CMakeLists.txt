@@ -775,8 +775,6 @@ file(
   ${PADDLE_SOURCE_DIR}/paddle/phi/kernels/selected_rows/scale_kernel.cc
   ${PADDLE_SOURCE_DIR}/paddle/phi/kernels/selected_rows/uniform_kernel.cc
   # ${PADDLE_SOURCE_DIR}/paddle/phi/kernels/selected_rows/gpu
-  ${PADDLE_SOURCE_DIR}/paddle/phi/kernels/selected_rows/gpu/adam_kernel.cu
-  ${PADDLE_SOURCE_DIR}/paddle/phi/kernels/selected_rows/gpu/adamw_kernel.cu
   ${PADDLE_SOURCE_DIR}/paddle/phi/kernels/selected_rows/gpu/add_n_kernel.cu
   ${PADDLE_SOURCE_DIR}/paddle/phi/kernels/selected_rows/gpu/clip_by_norm_kernel.cu
   ${PADDLE_SOURCE_DIR}/paddle/phi/kernels/selected_rows/gpu/clip_kernel.cu
